@@ -1,4 +1,3 @@
-// use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -15,36 +14,7 @@ fn handle_client(mut stream: TcpStream) {
     // Send message to client
     stream.write("Hello client!".as_bytes()).expect("Failed to write response to client :(");
     return;
-
-    /* Below is for browser clients
-    
-    // Open index.html and create response from it
-    let mut f = match File::open("index.html") {
-        Ok(file) => file,
-        Err(_) => {
-            // If the file doesn't exist or cannot be opened, return a 404 Not Found response
-            let response = "HTTP/1.1 404 NOT FOUND\r\n\r\n";
-            stream.write(response.as_bytes()).expect("Failed to write failure-response message :(");
-            return;
-        }
-    };
-
-    let mut response = Vec::new();
-    if let Err(e) = f.read_to_end(&mut response) {
-        println!("Failed to read index.html: {}", e);
-        return;
-    }
-
-    // Write the HTTP response header
-    let http_response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", response.len());
-    stream.write(http_response.as_bytes()).expect("Failed to write response header :(");
-
-    // Write the file content to the TCP stream
-    stream.write(&response).expect("Failed to write file content :(");
-    
-    */
 }
-
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:8080").expect("Failed to bind to address");
