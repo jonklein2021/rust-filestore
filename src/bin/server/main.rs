@@ -1,34 +1,69 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io;
+use std::error::Error;
+use tokio::net::{TcpListener, TcpStream};
 
-fn handle_client(mut stream: TcpStream) {
-    let mut request_buffer = [0; 1024];
+async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut request_buffer = vec![0; 1024];
 
-    // Read data from stream into the buffer array
-    stream.read(&mut request_buffer).expect("Failed to read from client :(");
+    // wait until client is readable
+    stream.readable().await?;
 
-    // Convert data in the buffer to a UTF-8 string
+    // loop until read from stream reads successfully
+    loop {
+        match stream.try_read(&mut request_buffer) {
+            Ok(n) => {
+                request_buffer.truncate(n);
+                break;
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                continue; // blocking error; try again
+            }
+            Err(e) => {
+                return Err(e.into()); // panic if any other other error
+            } 
+        }
+    }
+
+    // print client message
     let request = String::from_utf8_lossy(&request_buffer);
     println!("From client: {}", request);
 
-    // Send message to client
-    stream.write("Hello client!".as_bytes()).expect("Failed to write response to client :(");
-    return;
-}
+    // wait for the socket to be writable
+    stream.writable().await?;
 
-fn main() {
-    let listener = TcpListener::bind("127.0.0.1:8080").expect("Failed to bind to address");
-    println!("Server listening on 127.0.0.1:8080");
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                std::thread::spawn(|| handle_client(stream)); // closure
-                // handle_client(stream); // client hangs with this
+    // loop until write is successful
+    loop {
+        match stream.try_write(b"Hello Client!") {
+            Ok(_n) => {
+                break;
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                continue; // readiness event is a false positive
             }
             Err(e) => {
-                eprintln!("Failed to establish connection: {}", e); // write error to stderr stream
+                return Err(e.into());
             }
         }
     }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let addr = "127.0.0.1:8080";
+    let listener = TcpListener::bind(addr).await.unwrap();
+    println!("Server listening on {}", addr);
+
+    loop {
+        match listener.accept().await {
+            Ok((socket, _)) => { // socket is tokio::net::TcpStream, _ is address
+                if let Err(e) = handle_client(socket).await {
+                    return Err(e.into());
+                }
+            }
+            Err(e) => return Err(e.into())
+        }
+    }
+    
 }
