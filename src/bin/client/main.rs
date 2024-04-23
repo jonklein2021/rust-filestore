@@ -1,3 +1,12 @@
+//! Jon Klein
+//! client/main.rs
+//! 2024
+//!
+//! Client source code for https://github.com/jonklein2021/rust-filestore/
+//! This code parses command-line arguments, establishes a connection with 
+//! a TCP server, and performs an individual file operation per execution
+//!
+
 extern crate getopts;
 use getopts::Options;
 
@@ -6,7 +15,8 @@ use std::env;
 use std::error::Error;
 
 use tokio::net::TcpStream;
-// use tokio::fs::File;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 enum Operation {
     READ, // read file from server
@@ -114,19 +124,25 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
 }
 
 async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
+    // establish connection with server
     let stream = TcpStream::connect(&config.addr).await?;
+
+    // open file, read into buffer
+    let mut f = File::open(&config.filename).await?;
+    let mut file_buffer = vec![];
+    f.read_to_end(&mut file_buffer).await?;
 
     // wait for the socket to be writable
     stream.writable().await?;
     
     // loop until write to server is successful
     loop {
-        match stream.try_write(b"Hello Server!") {
+        match stream.try_write(&file_buffer) {
             Ok(_) => break,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e.into())
         }
-    }    
+    }
 
     // wait until server is readable
     stream.readable().await?;
