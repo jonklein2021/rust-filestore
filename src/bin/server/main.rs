@@ -4,10 +4,10 @@ use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 
 async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-    let mut request_buffer = vec![0; 1024];
-
     // wait until client is readable
     stream.readable().await?;
+    
+    let mut request_buffer = vec![0; 1024];
 
     // loop until read from stream reads successfully
     loop {
@@ -17,7 +17,7 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dy
                 break;
             },
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue, // blocking error; try again
-            Err(e) => return Err(e.into()), // panic if any other other error            } 
+            Err(e) => return Err(e.into()) // panic if any other error
         }
     }
 
@@ -33,7 +33,7 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dy
         match stream.try_write(b"Hello Client!") {
             Ok(_) => break,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue, // readiness event is a false positive
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e.into())
         }
     }
 

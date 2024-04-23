@@ -1,11 +1,120 @@
-use std::io;
-use std::error::Error;
-use tokio::net::TcpStream;
+extern crate getopts;
+use getopts::Options;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let addr = "127.0.0.1:8080";
-    let stream = TcpStream::connect(addr).await?;
+use std::io;
+use std::env;
+use std::error::Error;
+
+use tokio::net::TcpStream;
+// use tokio::fs::File;
+
+enum Operation {
+    READ, // read file from server
+    WRITE, // write file to server
+    DELETE, // delete file from server
+}
+
+impl Operation {
+    fn to_string(&self) -> &str {
+        match self {
+            Operation::READ => "READ",
+            Operation::WRITE => "WRITE",
+            Operation::DELETE => "DELETE"
+        }
+    }
+}
+
+struct Config {
+    addr: String, // default is 127.0.0.0:8080
+    filename: String, // path to file
+    operation: Operation // what to do with file
+}
+
+impl Config {
+    fn println(&self) {
+        println!("IP/Port = {}, File = {}, Operation = {}", self.addr, self.filename, self.operation.to_string());
+    }
+}
+
+fn usage(program: &str, opts: Options) {
+    let brief = format!("Usage: {} <file> -a <addr> [--read | --write | --delete]", program);
+    print!("{}", opts.usage(&brief));
+}
+
+fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
+    let program = args[0].clone();
+
+    let mut opts = Options::new();
+    opts.optopt("a", "addr", "server address and port", "<ip>"); // 127.0.0.1:8080 by default
+    
+    // operations: exactly one of {r, w, d} is required
+    opts.optflag("r", "read", "read from server");
+    opts.optflag("w", "write", "write file to server");
+    opts.optflag("d", "delete", "delete file on server");
+    opts.optflag("h", "help", "print this help menu");
+
+    let matches = match opts.parse(&args[1..]) {
+        Ok(m) => { m },
+        Err(e) => return Err(e.into())
+    };
+
+    // -h flag or no file provided
+    if matches.opt_present("h") || matches.free.is_empty() {
+        usage(&program, opts);
+        return Err("Help menu".into());
+    }
+
+    // too many operations provided
+    if (matches.opt_present("r") && matches.opt_present("w")) || 
+        (matches.opt_present("w") && matches.opt_present("d")) || 
+        (matches.opt_present("r") && matches.opt_present("r")) {
+        return Err("Select exactly one of {-r, -w, -d}".into());
+    }
+
+    // file
+    let file = matches.free[0].clone();
+
+    // ip and port
+    let address_port = if matches.opt_present("a") {
+        let arg = matches.opt_str("a").unwrap();
+        let parts_vec: Vec<&str> = arg.split(":").collect();
+        if parts_vec.len() != 2 {
+            return Err("Bad address/port. Example: 127.0.0.1:8080".into());
+        }
+        let ip = parts_vec[0].trim();
+        let port = parts_vec[1].trim();
+        if let Ok(_) = ip.parse::<std::net::Ipv4Addr>() {
+            if let Ok(_) = port.parse::<u16>() {
+                arg
+            } else {
+                return Err("Bad address/port. Example: 127.0.0.1:8080".into());
+            }
+        } else {
+            return Err("Bad address/port. Example: 127.0.0.1:8080".into());
+        }
+    } else {
+        // no argument given, use default
+        String::from("127.0.0.1:8080")
+    };
+
+    // operation
+    let op = if matches.opt_present("r") {
+        Operation::READ
+    } else if matches.opt_present("d") {
+        Operation::DELETE
+    } else {
+        Operation::WRITE // -w and default option
+    };
+
+    return Ok(Config {
+        addr: address_port,
+        filename: file,
+        operation: op
+    });
+}
+
+async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
+    let stream = TcpStream::connect(&config.addr).await?;
 
     // wait for the socket to be writable
     stream.writable().await?;
@@ -15,7 +124,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match stream.try_write(b"Hello Server!") {
             Ok(_) => break,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e.into())
         }
     }    
 
@@ -32,7 +141,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 break;
             },
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue, // blocking error; try again
-            Err(e) => return Err(e.into()), // panic if any other other error
+            Err(e) => return Err(e.into()) // panic if any other error
         }
     }
     
@@ -41,4 +150,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("From server: {}", stringified_response);
 
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = env::args().collect();
+    let config = match parse_args(args) {
+        Ok(cfg) => cfg,
+        // help menu short circuit is encoded as an error and is caught below
+        Err(ref e) if e.to_string() == String::from("Help menu") => {
+            return Ok(());
+        },
+        Err(e) => return Err(e.into()) // panic on other errors
+    };
+    config.println();
+    return run(&config).await;
 }
