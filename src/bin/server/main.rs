@@ -43,13 +43,25 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     let response_message = match req.op {
         Operation::READ => {
             // return file to user if it exists
-            String::from("File successfully returned.")
+
+            let path = format!("files/{}", &req.filename);
+            match File::open(&path).await {
+                Ok(_) => {
+                // TODO: uncomment the following and add a seriaize_response function
+                // Ok(mut file) => {
+
+                    // let mut contents = String::new();
+                    // file.read_to_string(&mut contents).await?;
+                    String::from("File successfully returned.")
+                }
+                Err(_) => String::from("File not found on server.")
+            }
         },
         Operation::WRITE => {
             // store file on disk
             let path = format!("files/{}", &req.filename);
     
-            // ensure the directory exists
+            // create the directory if it doesn't exist
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 fs::create_dir_all(parent).await?;
             }

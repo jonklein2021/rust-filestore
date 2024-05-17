@@ -47,7 +47,7 @@ pub struct Request {
     pub filebytes: Vec<u8>
 }
 
-// {op, filename, file} -> [op, len(filename), filename, len(file), file]
+// Request{op, filename, file} -> Vec[op, len(filename), filename, len(file), file]
 pub async fn serialize_request(req: &mut Request) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut result = Vec::new();
 
@@ -68,7 +68,7 @@ pub async fn serialize_request(req: &mut Request) -> Result<Vec<u8>, Box<dyn Err
     Ok(result)
 }
 
-// [op, len(filename), filename, len(file), file] -> {op, filename, file}
+// Vec[op, len(filename), filename, len(file), file] -> Request{op, filename, file}
 pub async fn deserialize_request(data: &Vec<u8>) -> Result<Request, Box<dyn Error>> {
     let mut pos = 0;
 
@@ -92,6 +92,79 @@ pub async fn deserialize_request(data: &Vec<u8>) -> Result<Request, Box<dyn Erro
     let filebytes = data[pos..pos+file_len].to_vec();
 
     Ok(Request{op, filename, filebytes})
+}
+
+pub struct Response {
+    ok: bool,
+    msg: String,
+    filename: Option<String>,
+    filebytes: Option<Vec<u8>>
+}
+
+// Response{ok, msg, filename, filebytes} -> Vec[ok, len(msg), msg, len(filename), filename, len(filebytes), filebytes]
+pub async fn serialize_response(res: &mut Response) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut result = Vec::new();
+
+    // push ok
+    result.push(res.ok as u8);
+
+    // push msg
+    let msg_bytes = res.msg.as_bytes();
+    let msg_len = msg_bytes.len() as u32;
+    result.extend_from_slice(&msg_len.to_be_bytes());
+    result.extend_from_slice(msg_bytes);
+
+    // push filename
+    if let Some(name) = &res.filename {
+        let filename_bytes = name.as_bytes();
+        let filename_len = filename_bytes.len() as u32;
+        result.extend_from_slice(&filename_len.to_be_bytes());
+        result.extend_from_slice(filename_bytes);
+    }
+
+    // push filebytes
+    if let Some(bytes) = &res.filebytes {
+        let filebytes_len = bytes.len() as u32;
+        result.extend_from_slice(&filebytes_len.to_be_bytes());
+        result.extend_from_slice(bytes);
+    }
+    
+    Ok(result)
+}
+
+// Vec[ok, len(msg), msg, len(filename), filename, len(filebytes), filebytes] -> Response{ok, msg, filename, filebytes}
+pub async fn deserialize_response(data: &Vec<u8>) -> Result<Response, Box<dyn Error>> {
+    let mut pos = 0;
+
+    // read ok
+    let ok = data[pos] != 0;
+    pos += 1;
+
+    // read msg
+    let msg_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
+    pos += 4;
+
+    let msg = String::from_utf8(data[pos..pos+msg_len].to_vec()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 sequence"))?;
+    pos += msg_len;
+
+    // stop if pos has reached end of vec
+    // this occurs in the event of responses to non-write operations
+    if pos >= data.len() {
+        return Ok(Response{ok, msg, filename: None, filebytes: None});
+    }
+
+    // read filename
+    let filename_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
+    pos += 4;
+    let filename = String::from_utf8(data[pos..pos+filename_len].to_vec()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 sequence"))?;
+    pos += filename_len;
+
+    // read filebytes
+    let filebytes_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
+    pos += 4;
+    let filebytes = data[pos..pos+filebytes_len].to_vec();
+
+    Ok(Response{ok, msg, filename: Some(filename), filebytes: Some(filebytes)})
 }
 
 pub mod debug {
