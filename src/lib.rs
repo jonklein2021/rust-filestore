@@ -12,7 +12,7 @@
 
 use std::error::Error;
 use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Copy, Clone)]
 pub enum Operation {
@@ -22,6 +22,15 @@ pub enum Operation {
 }
 
 impl Operation {
+    pub fn from_u8(value: u8) -> Option<Operation> {
+        match value {
+            0 => Some(Operation::READ),
+            1 => Some(Operation::WRITE),
+            2 => Some(Operation::DELETE),
+            _ => None,
+        }
+    }
+    
     pub fn to_string(&self) -> &str {
         match self {
             Operation::READ => "READ",
@@ -63,13 +72,39 @@ pub async fn serialize_request(req: &mut Request) -> Result<Vec<u8>, Box<dyn Err
 }
 
 // [op, len(filename), filename, len(file), file] -> {op, filename, file}
-// pub fn deserialize_request(data: Vec<u8>) -> Request {    
-//     let result = Request{
+// Deserialize function
+pub async fn deserialize_request(data: Vec<u8>) -> Result<Request, Box<dyn Error>> {
+    let mut pos = 0;
 
-//     };
+    // read op
+    let op = Operation::from_u8(data[pos]).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid operation"))?;
+    pos += 1;
 
-//     return result;
-// }
+    // read len(filename)
+    let filename_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
+    pos += 4;
+
+    // read filename
+    let filename = String::from_utf8(data[pos..pos+filename_len].to_vec()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 sequence"))?;
+    pos += filename_len;
+
+    // read len(file)
+    let file_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
+    pos += 4;
+
+    // read file
+    let file_contents = data[pos..pos+file_len].to_vec();
+
+    // write contents to a temporary file
+    let mut file = File::create(&filename).await?;
+    file.write_all(&file_contents).await?;
+    file.flush().await?; 
+
+    // Open the file for reading
+    let file = File::open(&filename).await?;
+
+    Ok(Request{op, filename, file})
+}
 
 pub mod debug {
     fn print_type_of<T>(_: &T) {
