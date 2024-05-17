@@ -10,29 +10,16 @@
 extern crate getopts;
 use getopts::Options;
 
+// lib.rs
+use rust_filestore::{Operation, Request};
+use rust_filestore::{serialize_request};
+
 use std::io;
 use std::env;
 use std::error::Error;
 
 use tokio::net::TcpStream;
 use tokio::fs::File;
-use tokio::io::AsyncReadExt;
-
-enum Operation {
-    READ, // read file from server
-    WRITE, // write file to server
-    DELETE, // delete file from server
-}
-
-impl Operation {
-    fn to_string(&self) -> &str {
-        match self {
-            Operation::READ => "READ",
-            Operation::WRITE => "WRITE",
-            Operation::DELETE => "DELETE"
-        }
-    }
-}
 
 struct Config {
     addr: String, // default is 127.0.0.0:8080
@@ -123,21 +110,28 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
     });
 }
 
+// send file and operation to server
 async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
     // establish connection with server
     let stream = TcpStream::connect(&config.addr).await?;
 
-    // open file, read into buffer
-    let mut f = File::open(&config.filename).await?;
-    let mut file_buffer = vec![];
-    f.read_to_end(&mut file_buffer).await?;
+    // open file, serialize request
+    let f = File::open(&config.filename).await?;
+
+    let mut req = Request {
+        op: config.operation,
+        filename: config.filename.clone(),
+        file: f
+    };
+
+    let request_buffer = serialize_request(&mut req).await?;
 
     // wait for the socket to be writable
     stream.writable().await?;
     
     // loop until write to server is successful
     loop {
-        match stream.try_write(&file_buffer) {
+        match stream.try_write(&request_buffer) {
             Ok(_) => break,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e.into())
