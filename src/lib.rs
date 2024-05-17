@@ -48,7 +48,7 @@ pub struct Request {
 }
 
 // Request{op, filename, file} -> Vec[op, len(filename), filename, len(file), file]
-pub async fn serialize_request(req: &mut Request) -> Result<Vec<u8>, Box<dyn Error>> {
+pub async fn serialize_request(req: &Request) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut result = Vec::new();
 
     // push op
@@ -95,14 +95,14 @@ pub async fn deserialize_request(data: &Vec<u8>) -> Result<Request, Box<dyn Erro
 }
 
 pub struct Response {
-    ok: bool,
-    msg: String,
-    filename: Option<String>,
-    filebytes: Option<Vec<u8>>
+    pub ok: bool,
+    pub msg: String,
+    pub filename: Option<String>,
+    pub filebytes: Option<Vec<u8>>
 }
 
 // Response{ok, msg, filename, filebytes} -> Vec[ok, len(msg), msg, len(filename), filename, len(filebytes), filebytes]
-pub async fn serialize_response(res: &mut Response) -> Result<Vec<u8>, Box<dyn Error>> {
+pub async fn serialize_response(res: &Response) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut result = Vec::new();
 
     // push ok
@@ -148,7 +148,7 @@ pub async fn deserialize_response(data: &Vec<u8>) -> Result<Response, Box<dyn Er
     pos += msg_len;
 
     // stop if pos has reached end of vec
-    // this occurs in the event of responses to non-write operations
+    // this occurs in response to read requests
     if pos >= data.len() {
         return Ok(Response{ok, msg, filename: None, filebytes: None});
     }

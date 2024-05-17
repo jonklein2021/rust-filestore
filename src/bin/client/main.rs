@@ -12,15 +12,15 @@ use getopts::Options;
 
 // lib.rs
 use rust_filestore::{Operation, Request};
-use rust_filestore::{serialize_request};
+use rust_filestore::{serialize_request, deserialize_response};
 
 use std::io;
 use std::env;
 use std::error::Error;
 
 use tokio::net::TcpStream;
-use tokio::io::AsyncReadExt;
-use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::fs::{self, File};
 
 struct Config {
     addr: String, // default is 127.0.0.0:8080
@@ -124,13 +124,13 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
         f.read_to_end(&mut filebytes).await?;
     }
 
-    let mut req = Request {
+    let req = Request {
         op: config.operation,
         filename: config.filename.clone(),
         filebytes
     };
 
-    let request_buffer = serialize_request(&mut req).await?;
+    let request_buffer = serialize_request(&req).await?;
 
     // wait for the socket to be writable
     stream.writable().await?;
@@ -161,9 +161,28 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
         }
     }
     
-    // read server response
-    let stringified_response = String::from_utf8_lossy(&mut response_buffer);
-    println!("From server: {}", stringified_response);
+    // receive and deserialize server response
+    let response = deserialize_response(&response_buffer).await?;
+    
+    // write file to disk if there is one
+    if let (Some(filename), Some(filebytes)) = (&response.filename, &response.filebytes) {
+        if config.operation == Operation::READ {
+            let path = format!("received/{}", filename);
+
+            // create the directory if it doesn't exist
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+
+            // write file to disk
+            let mut file = File::create(&path).await?;
+            file.write_all(filebytes).await?;
+            file.flush().await?;
+            println!("File '{}' written successfully.", filename);
+        }
+    }
+    
+    println!("{}", &response.msg);
 
     Ok(())
 }

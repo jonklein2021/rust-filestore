@@ -8,14 +8,14 @@
 //!
 
 // lib.rs
-use rust_filestore::Operation;
-use rust_filestore::{deserialize_request};
+use rust_filestore::{Operation, Response};
+use rust_filestore::{deserialize_request, serialize_response};
 
 use std::io;
 use std::error::Error;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::io::AsyncWriteExt;
-use tokio::fs::{self, File};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::fs::{File};
 
 async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     // wait until client is readable
@@ -40,21 +40,29 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     let req = deserialize_request(&request_buffer).await?;
 
     // response to client to be replaced in following match statement
-    let response_message = match req.op {
+    let response = match req.op {
         Operation::READ => {
             // return file to user if it exists
 
             let path = format!("files/{}", &req.filename);
             match File::open(&path).await {
-                Ok(_) => {
-                // TODO: uncomment the following and add a seriaize_response function
-                // Ok(mut file) => {
+                Ok(mut file) => {
+                    let mut contents = vec![];
+                    file.read_to_end(&mut contents).await?;
 
-                    // let mut contents = String::new();
-                    // file.read_to_string(&mut contents).await?;
-                    String::from("File successfully returned.")
+                    Response {
+                        ok: true,
+                        msg: String::from("File successfully returned."),
+                        filename: Some(req.filename.clone()),
+                        filebytes: Some(contents)
+                    }
                 }
-                Err(_) => String::from("File not found on server.")
+                Err(_) => Response {
+                    ok: false,
+                    msg: String::from("File not found on server."),
+                    filename: None,
+                    filebytes: None
+                }
             }
         },
         Operation::WRITE => {
@@ -63,7 +71,7 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     
             // create the directory if it doesn't exist
             if let Some(parent) = std::path::Path::new(&path).parent() {
-                fs::create_dir_all(parent).await?;
+                tokio::fs::create_dir_all(parent).await?;
             }
 
             // create file
@@ -71,24 +79,43 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
             file.write_all(&req.filebytes).await?;
             file.flush().await?;
 
-            String::from("File successfully stored.")
+            Response {
+                ok: true,
+                msg: String::from("File successfully stored."),
+                filename: None,
+                filebytes: None
+            }
         },
         Operation::DELETE => {
             // delete file from disk
-            String::from("File successfully deleted.")
+
+            Response {
+                ok: true,
+                msg: String::from("File successfully deleted."),
+                filename: None,
+                filebytes: None
+            }
         },
         Operation::LIST => {
             // list all names of file currently stored
-            String::from("Files successfully listed.")
+
+            Response {
+                ok: true,
+                msg: String::from("Files: file1.txt, file2.txt, file3.txt"),
+                filename: None,
+                filebytes: None
+            }
         }
     };
+
+    let response_buffer = serialize_response(&response).await?;
 
     // wait for the socket to be writable
     stream.writable().await?;
 
     // loop until response to client is successfully sent
     loop {
-        match stream.try_write(response_message.as_bytes()) {
+        match stream.try_write(&response_buffer) {
             Ok(_) => break,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue, // readiness event is a false positive
             Err(e) => return Err(e.into())
