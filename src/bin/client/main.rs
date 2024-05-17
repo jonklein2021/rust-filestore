@@ -19,6 +19,7 @@ use std::env;
 use std::error::Error;
 
 use tokio::net::TcpStream;
+use tokio::io::AsyncReadExt;
 use tokio::fs::File;
 
 struct Config {
@@ -34,7 +35,7 @@ impl Config {
 }
 
 fn usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} <file> -a <addr> [--read | --write | --delete]", program);
+    let brief = format!("Usage: {} <file> -a [addr] [--read | --write | --delete]", program);
     print!("{}", opts.usage(&brief));
 }
 
@@ -48,6 +49,9 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
     opts.optflag("r", "read", "read from server");
     opts.optflag("w", "write", "write file to server");
     opts.optflag("d", "delete", "delete file on server");
+    opts.optflag("l", "list", "list all files on server");
+
+    // help option
     opts.optflag("h", "help", "print this help menu");
 
     let matches = match opts.parse(&args[1..]) {
@@ -61,18 +65,17 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
         return Err("Help menu".into());
     }
 
-    // too many operations provided
-    if (matches.opt_present("r") && matches.opt_present("w")) || 
-        (matches.opt_present("w") && matches.opt_present("d")) || 
-        (matches.opt_present("r") && matches.opt_present("r")) {
-        return Err("Select exactly one of {-r, -w, -d}".into());
+    // ensure only operation is provided
+    let options = vec!["r", "w", "d", "l"];
+    if options.iter().filter(|&&opt| matches.opt_present(opt)).count() != 1 {
+        return Err("Select exactly one of {-r, -w, -d, -l}".into());
     }
 
-    // file
-    let file = matches.free[0].clone();
+    // name of file
+    let filename = matches.free[0].clone();
 
     // ip and port
-    let address_port = if matches.opt_present("a") {
+    let addr = if matches.opt_present("a") {
         let arg = matches.opt_str("a").unwrap();
         let parts_vec: Vec<&str> = arg.split(":").collect();
         if parts_vec.len() != 2 {
@@ -95,19 +98,17 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
     };
 
     // operation
-    let op = if matches.opt_present("r") {
+    let operation = if matches.opt_present("r") {
         Operation::READ
     } else if matches.opt_present("d") {
         Operation::DELETE
+    } else if matches.opt_present("l") {
+        Operation::LIST
     } else {
         Operation::WRITE // -w and default option
     };
 
-    return Ok(Config {
-        addr: address_port,
-        filename: file,
-        operation: op
-    });
+    return Ok(Config {addr, filename, operation});
 }
 
 // send file and operation to server
@@ -115,13 +116,18 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
     // establish connection with server
     let stream = TcpStream::connect(&config.addr).await?;
 
-    // open file, serialize request
-    let f = File::open(&config.filename).await?;
+    // only write operations must provide a client-side file
+    let mut filebytes = vec![];
+    
+    if config.operation == Operation::WRITE {
+        let mut f = File::open(&config.filename).await?;
+        f.read_to_end(&mut filebytes).await?;
+    }
 
     let mut req = Request {
         op: config.operation,
         filename: config.filename.clone(),
-        file: f
+        filebytes
     };
 
     let request_buffer = serialize_request(&mut req).await?;
