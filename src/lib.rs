@@ -84,7 +84,7 @@ pub async fn deserialize_request(data: &Vec<u8>) -> Result<Request, Box<dyn Erro
     let filename = String::from_utf8(data[pos..pos+filename_len].to_vec()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 sequence"))?;
     pos += filename_len;
 
-    // read number of bytes of file contents
+    // read number of bytes of file
     let file_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
     pos += 4;
 
@@ -153,15 +153,19 @@ pub async fn deserialize_response(data: &Vec<u8>) -> Result<Response, Box<dyn Er
         return Ok(Response{ok, msg, filename: None, filebytes: None});
     }
 
-    // read filename
+    // read len(filename)
     let filename_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
     pos += 4;
+    
+    // read filename
     let filename = String::from_utf8(data[pos..pos+filename_len].to_vec()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 sequence"))?;
     pos += filename_len;
 
-    // read filebytes
+    // read number of bytes of file
     let filebytes_len = u32::from_be_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
     pos += 4;
+    
+    // read file bytes
     let filebytes = data[pos..pos+filebytes_len].to_vec();
 
     Ok(Response{ok, msg, filename: Some(filename), filebytes: Some(filebytes)})

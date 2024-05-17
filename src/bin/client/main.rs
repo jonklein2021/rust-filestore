@@ -16,11 +16,12 @@ use rust_filestore::{serialize_request, deserialize_response};
 
 use std::io;
 use std::env;
+use std::path::Path;
 use std::error::Error;
 
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::fs::{self, File};
+use tokio::fs::File;
 
 struct Config {
     addr: String, // default is 127.0.0.0:8080
@@ -116,17 +117,20 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
     // establish connection with server
     let stream = TcpStream::connect(&config.addr).await?;
 
-    // only write operations must provide a client-side file
+    // write operations must provide a client-side file
     let mut filebytes = vec![];
-    
     if config.operation == Operation::WRITE {
         let mut f = File::open(&config.filename).await?;
         f.read_to_end(&mut filebytes).await?;
     }
 
+    // get basename of path
+    let path = Path::new(&config.filename);
+    let basename = path.file_name().unwrap().to_string_lossy();
+
     let req = Request {
         op: config.operation,
-        filename: config.filename.clone(),
+        filename: basename.to_string(),
         filebytes
     };
 
@@ -147,7 +151,7 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
     // wait until server is readable
     stream.readable().await?;
     
-    let mut response_buffer = vec![0; 1024];
+    let mut response_buffer = vec![0; 1<<20]; // about 1MB
 
     // loop until stream is read into buffer successfully
     loop {
@@ -170,7 +174,7 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
             let path = format!("received/{}", filename);
 
             // create the directory if it doesn't exist
-            if let Some(parent) = std::path::Path::new(&path).parent() {
+            if let Some(parent) = Path::new(&path).parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
 
@@ -178,7 +182,7 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
             let mut file = File::create(&path).await?;
             file.write_all(filebytes).await?;
             file.flush().await?;
-            println!("File '{}' written successfully.", filename);
+            println!("File '{}' saved successfully.", filename);
         }
     }
     
@@ -199,5 +203,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Err(e) => return Err(e.into()) // panic on other errors
     };
     config.println();
-    return run(&config).await;
+    run(&config).await
 }

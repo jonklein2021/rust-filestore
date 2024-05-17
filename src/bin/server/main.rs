@@ -15,7 +15,7 @@ use std::io;
 use std::error::Error;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::fs::{File};
+use tokio::fs::File;
 
 async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     // wait until client is readable
@@ -98,10 +98,23 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         },
         Operation::LIST => {
             // list all names of file currently stored
+            
+            
+            // read directory asynchronously, store filenames in a string
+            let mut entries = tokio::fs::read_dir("files").await?;
+            let mut files = String::new();
+
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.is_file() {
+                    files += &path.to_string_lossy();
+                    files += "\n";
+                }
+            }
 
             Response {
                 ok: true,
-                msg: String::from("Files: file1.txt, file2.txt, file3.txt"),
+                msg: files,
                 filename: None,
                 filebytes: None
             }
