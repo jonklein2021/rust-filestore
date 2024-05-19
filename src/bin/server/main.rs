@@ -38,13 +38,13 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
 
     // handle client's request
     let req = deserialize_request(&request_buffer).await?;
+    
+    // server-side path to file
+    let path = format!("files/{}", &req.filename);
 
     // response to client to be replaced in following match statement
     let response = match req.op {
-        Operation::READ => {
-            // return file to user if it exists
-
-            let path = format!("files/{}", &req.filename);
+        Operation::READ => { // return file to user if it exists
             match File::open(&path).await {
                 Ok(mut file) => {
                     let mut contents = vec![];
@@ -65,10 +65,7 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 }
             }
         },
-        Operation::WRITE => {
-            // store file on disk
-            let path = format!("files/{}", &req.filename);
-    
+        Operation::WRITE => { // store file on disk
             // create the directory if it doesn't exist
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 tokio::fs::create_dir_all(parent).await?;
@@ -86,24 +83,27 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 filebytes: None
             }
         },
-        Operation::DELETE => {
-            // delete file from disk
-
-            Response {
-                ok: true,
-                msg: String::from("File successfully deleted."),
-                filename: None,
-                filebytes: None
+        Operation::DELETE => { // delete file from disk
+            match tokio::fs::remove_file(&path).await {
+                Ok(_) => Response {
+                        ok: true,
+                        msg: String::from("File successfully deleted."),
+                        filename: None,
+                        filebytes: None
+                    },
+                Err(_) => Response {
+                    ok: false,
+                    msg: String::from("File could not be deleted."),
+                    filename: None,
+                    filebytes: None
+                }
             }
         },
-        Operation::LIST => {
-            // list all names of file currently stored
-            
-            
+        Operation::LIST => { // list all names of file currently stored
             // read directory asynchronously, store filenames in a string
-            let mut entries = tokio::fs::read_dir("files").await?;
             let mut files = String::new();
-
+            let mut entries = tokio::fs::read_dir("files").await?;
+            
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
                 if path.is_file() {
