@@ -25,18 +25,22 @@ use tokio::fs::File;
 
 struct Config {
     addr: String, // default is 127.0.0.0:8080
-    filename: String, // path to file
-    operation: Operation // what to do with file
+    filename: Option<String>, // path to file
+    operation: Operation // what to do
 }
 
 impl Config {
     fn println(&self) {
-        println!("IP/Port = {}, File = {}, Operation = {}", self.addr, self.filename, self.operation.to_string());
+        if let Some(filename) = &self.filename {
+            println!("IP/Port = {}, File = {}, Operation = {}", self.addr, filename, self.operation.to_string());
+        } else {
+            println!("IP/Port = {}, Operation = {}", self.addr, self.operation.to_string());
+        }
     }
 }
 
 fn usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} <file> -a [addr] [--read | --write | --delete]", program);
+    let brief = format!("Usage: {} [file] -a [addr] [--read | --write | --delete]", program);
     print!("{}", opts.usage(&brief));
 }
 
@@ -47,9 +51,9 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
     opts.optopt("a", "addr", "server address and port", "<ip>"); // 127.0.0.1:8080 by default
     
     // operations: exactly one of {r, w, d} is required
-    opts.optflag("r", "read", "read from server");
-    opts.optflag("w", "write", "write file to server");
-    opts.optflag("d", "delete", "delete file on server");
+    opts.optflagopt("r", "read", "read from server", "<file>");
+    opts.optflagopt("w", "write", "write file to server", "<file>");
+    opts.optflagopt("d", "delete", "delete file on server", "<file>");
     opts.optflag("l", "list", "list all files on server");
 
     // help option
@@ -60,20 +64,17 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
         Err(e) => return Err(e.into())
     };
 
-    // -h flag or no file provided
-    if matches.opt_present("h") || matches.free.is_empty() {
+    // -h flag
+    if matches.opt_present("h") {
         usage(&program, opts);
         return Err("Help menu".into());
     }
 
-    // ensure only operation is provided
+    // ensure that exactly one operation is provided
     let options = vec!["r", "w", "d", "l"];
     if options.iter().filter(|&&opt| matches.opt_present(opt)).count() != 1 {
         return Err("Select exactly one of {-r, -w, -d, -l}".into());
     }
-
-    // name of file
-    let filename = matches.free[0].clone();
 
     // ip and port
     let addr = if matches.opt_present("a") {
@@ -98,43 +99,45 @@ fn parse_args(args: Vec<String>) -> Result<Config, Box<dyn Error>> {
         String::from("127.0.0.1:8080")
     };
 
-    // operation
-    let operation = if matches.opt_present("r") {
-        Operation::READ
-    } else if matches.opt_present("d") {
-        Operation::DELETE
-    } else if matches.opt_present("l") {
-        Operation::LIST
-    } else {
-        Operation::WRITE // -w and default option
-    };
+    // filename, operation
+    let mut filename: Option<String> = None;
+    let mut operation = Operation::LIST;
+    for (i, opt) in options.iter().enumerate() {
+        if matches.opt_present(opt) && opt != &"l" {
+            operation = Operation::from_u8(i as u8).unwrap();
+            filename = Some(matches.opt_str(opt).ok_or("Missing file.")?);
+            break;
+        }
+    }
 
     return Ok(Config {addr, filename, operation});
 }
 
 // send file and operation to server
 async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
-    // establish connection with server
-    let stream = TcpStream::connect(&config.addr).await?;
-
-    // write operations must provide a client-side file
+    // package arguments into a request
     let mut filebytes = vec![];
-    if config.operation == Operation::WRITE {
-        let mut f = File::open(&config.filename).await?;
-        f.read_to_end(&mut filebytes).await?;
+    let filename = config.filename.as_deref().unwrap_or("");
+    let basename = Path::new(filename).file_name().unwrap_or_default().to_string_lossy().to_string();
+
+    if config.operation == Operation::WRITE && !filename.is_empty() {
+        if let Ok(mut f) = File::open(filename).await {
+            f.read_to_end(&mut filebytes).await?;
+        } else {
+            return Err("File not found".into());
+        }
     }
-
-    // get basename of path
-    let path = Path::new(&config.filename);
-    let basename = path.file_name().unwrap().to_string_lossy();
-
+    
     let req = Request {
         op: config.operation,
-        filename: basename.to_string(),
+        filename: basename,
         filebytes
     };
 
     let request_buffer = serialize_request(&req).await?;
+    
+    // establish connection with server
+    let stream = TcpStream::connect(&config.addr).await?;
 
     // wait for the socket to be writable
     stream.writable().await?;
@@ -185,10 +188,14 @@ async fn run(config: &Config) -> Result<(), Box<dyn Error>> {
             println!("File '{}' saved successfully.", filename);
         }
     }
-    
-    println!("{}", &response.msg);
 
-    Ok(())
+    if response.ok {
+        println!("{}", &response.msg);
+        Ok(())
+    } else {
+        Err(response.msg.into())
+    }
+
 }
 
 #[tokio::main]

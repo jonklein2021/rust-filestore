@@ -2,13 +2,10 @@
 //! lib.rs
 //! 2024
 //!
-//! Common functions for client and server files
+//! Common structs and functions for client and server files
 //! This file defines serialilzation and deserialization
-//! functions for requests and responses as well as
-//! helpful debugger functions
+//! functions for requests and responses
 //!
-
-#![allow(dead_code)]
 
 use std::error::Error;
 
@@ -169,10 +166,4 @@ pub async fn deserialize_response(data: &Vec<u8>) -> Result<Response, Box<dyn Er
     let filebytes = data[pos..pos+filebytes_len].to_vec();
 
     Ok(Response{ok, msg, filename: Some(filename), filebytes: Some(filebytes)})
-}
-
-pub mod debug {
-    fn print_type_of<T>(_: &T) {
-        println!("{}", std::any::type_name::<T>())
-    }
 }

@@ -20,15 +20,17 @@ use tokio::fs::File;
 async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     // wait until client is readable
     stream.readable().await?;
+
+    // send key 
     
-    // max buffer size = 1.048576 MB
+    // max buffer size = 1 MB
     let mut request_buffer = vec![0; 1<<20];
 
     // loop until read from stream reads successfully
     loop {
         match stream.try_read(&mut request_buffer) {
             Ok(n) => {
-                request_buffer.truncate(n); // excess space
+                request_buffer.truncate(n); // remove excess space
                 break;
             },
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue, // blocking error; try again
@@ -53,7 +55,7 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
                     Response {
                         ok: true,
                         msg: String::from("File successfully returned."),
-                        filename: Some(req.filename.clone()),
+                        filename: Some(req.filename),
                         filebytes: Some(contents)
                     }
                 }
@@ -101,20 +103,20 @@ async fn handle_client(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         },
         Operation::LIST => { // list all names of file currently stored
             // read directory asynchronously, store filenames in a string
-            let mut files = String::new();
             let mut entries = tokio::fs::read_dir("files").await?;
+            let mut filenames = String::from("=================================================\n");
             
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
                 if path.is_file() {
-                    files += &path.to_string_lossy();
-                    files += "\n";
+                    filenames += &path.to_string_lossy()[6..]; // only add basename
+                    filenames += "\n";
                 }
             }
 
             Response {
                 ok: true,
-                msg: files,
+                msg: filenames,
                 filename: None,
                 filebytes: None
             }
